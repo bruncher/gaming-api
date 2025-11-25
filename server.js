@@ -6,6 +6,20 @@ const app = express();
 // In-memory cache per currency
 let cache = {};
 const CACHE_TTL = 1000 * 60 * 60; // 1 hour
+const CURRENCIES = ["USD", "CAD"];
+let storeMap = {};
+
+/**
+ * Load storeID -> storeName map
+ */
+async function loadStores() {
+  try {
+    const res = await axios.get("https://www.cheapshark.com/api/1.0/stores");
+    storeMap = Object.fromEntries(res.data.map(s => [s.storeID, s.storeName]));
+  } catch (err) {
+    console.error("Error loading stores:", err.message);
+  }
+}
 
 /**
  * Fetch deals from CheapShark and store in cache
@@ -13,13 +27,31 @@ const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 async function fetchDeals(currency) {
   try {
     const response = await axios.get("https://www.cheapshark.com/api/1.0/deals", {
-      params: { pageSize: 20, cc: currency }
+      params: { pageSize: 100, cc: currency }
     });
+
+    // Keep only one deal per game, pick cheapest
+    const uniqueDeals = Object.values(
+      response.data.reduce((acc, deal) => {
+        const gameId = deal.gameID;
+        if (!acc[gameId] || parseFloat(deal.salePrice) < parseFloat(acc[gameId].salePrice)) {
+          acc[gameId] = deal;
+        }
+        return acc;
+      }, {})
+    );
+
+    // Add human-readable storeName
+    uniqueDeals.forEach(d => {
+      d.storeName = storeMap[d.storeID] || "Unknown";
+    });
+
     cache[currency] = {
       timestamp: Date.now(),
-      data: response.data
+      data: uniqueDeals
     };
-    console.log(`Cache updated for ${currency} with ${response.data.length} deals`);
+
+    console.log(`Cache updated for ${currency} with ${uniqueDeals.length} deals`);
   } catch (err) {
     console.error(`Error fetching deals for ${currency}:`, err.message);
   }
@@ -28,14 +60,17 @@ async function fetchDeals(currency) {
 /**
  * Pre-warm USD and CAD on startup
  */
-["USD", "CAD"].forEach(fetchDeals);
+async function preWarm() {
+  await loadStores();
+  await Promise.all(CURRENCIES.map(fetchDeals));
+}
 
 /**
  * Set up hourly update for USD and CAD
  */
 setInterval(() => {
-  ["USD", "CAD"].forEach(fetchDeals);
-}, CACHE_TTL); // every 1 hour
+  CURRENCIES.forEach(fetchDeals);
+}, CACHE_TTL);
 
 /**
  * GET /deals
@@ -45,28 +80,17 @@ app.get("/deals", async (req, res) => {
   try {
     const currency = (req.query.currency || "USD").toUpperCase();
 
-    // Return cache if available
-    if (cache[currency]) {
-      return res.json({
-        success: true,
-        cached: true,
-        currency,
-        count: cache[currency].data.length,
-        deals: cache[currency].data
-      });
+    if (!cache[currency]) {
+      await fetchDeals(currency);
     }
-
-    // If cache missing (first-time other currency), fetch on-demand
-    await fetchDeals(currency);
 
     res.json({
       success: true,
-      cached: false,
+      cached: true,
       currency,
       count: cache[currency].data.length,
       deals: cache[currency].data
     });
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, error: err.message });
@@ -74,4 +98,7 @@ app.get("/deals", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`gaming-api running on port ${PORT}`));
+app.listen(PORT, async () => {
+  console.log(`gaming-api running on port ${PORT}`);
+  await preWarm();
+});
