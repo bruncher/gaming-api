@@ -28,27 +28,39 @@ async function loadStores() {
 async function fetchDeals(currency) {
   try {
     let page = 0;
-    const allDeals = [];
     const uniqueGames = {};
+    const pagesFetched = [];
 
-    // Keep fetching until we have 100 unique games or 5 pages max
-    while (Object.keys(uniqueGames).length < 100 && page < 5) {
+    // Keep fetching until we have 100 unique games or 10 pages max
+    while (page < 10) {
       const response = await axios.get("https://www.cheapshark.com/api/1.0/deals", {
-        params: { pageSize: 60, pageNumber: page, cc: currency }
+        params: { pageSize: 100, pageNumber: page, cc: currency }
       });
 
-      response.data.forEach(deal => {
+      let newDealsThisPage = 0;
+
+      for (const deal of response.data) {
         const gameId = deal.gameID;
         // Keep cheapest deal per game
         if (!uniqueGames[gameId] || parseFloat(deal.salePrice) < parseFloat(uniqueGames[gameId].salePrice)) {
           uniqueGames[gameId] = deal;
+          newDealsThisPage++;
         }
-      });
+
+        // Stop immediately if we hit 100 unique games
+        if (Object.keys(uniqueGames).length >= 100) break;
+      }
+
+      pagesFetched.push({ page: page + 1, dealsFetched: newDealsThisPage });
+
+      // Stop fetching more pages if we hit 100 unique games
+      if (Object.keys(uniqueGames).length >= 100) break;
 
       page++;
     }
 
-    const uniqueDeals = Object.values(uniqueGames);
+    // Convert to array and trim to exactly 100 unique games (safety)
+    const uniqueDeals = Object.values(uniqueGames).slice(0, 100);
 
     // Add human-readable storeName
     uniqueDeals.forEach(d => {
@@ -61,6 +73,8 @@ async function fetchDeals(currency) {
     };
 
     console.log(`Cache updated for ${currency} with ${uniqueDeals.length} unique deals`);
+    console.log(`Pages fetched:`, pagesFetched);
+
   } catch (err) {
     console.error(`Error fetching deals for ${currency}:`, err.message);
   }
