@@ -16,30 +16,39 @@ async function loadStores() {
   try {
     const res = await axios.get("https://www.cheapshark.com/api/1.0/stores");
     storeMap = Object.fromEntries(res.data.map(s => [s.storeID, s.storeName]));
+    console.log("Store map loaded:", Object.keys(storeMap).length, "stores");
   } catch (err) {
     console.error("Error loading stores:", err.message);
   }
 }
 
 /**
- * Fetch deals from CheapShark and store in cache
+ * Fetch deals from CheapShark (multiple pages) and store in cache
  */
 async function fetchDeals(currency) {
   try {
-    const response = await axios.get("https://www.cheapshark.com/api/1.0/deals", {
-      params: { pageSize: 100, cc: currency }
-    });
+    let page = 0;
+    const allDeals = [];
+    const uniqueGames = {};
 
-    // Keep only one deal per game, pick cheapest
-    const uniqueDeals = Object.values(
-      response.data.reduce((acc, deal) => {
+    // Keep fetching until we have 100 unique games or 5 pages max
+    while (Object.keys(uniqueGames).length < 100 && page < 5) {
+      const response = await axios.get("https://www.cheapshark.com/api/1.0/deals", {
+        params: { pageSize: 60, pageNumber: page, cc: currency }
+      });
+
+      response.data.forEach(deal => {
         const gameId = deal.gameID;
-        if (!acc[gameId] || parseFloat(deal.salePrice) < parseFloat(acc[gameId].salePrice)) {
-          acc[gameId] = deal;
+        // Keep cheapest deal per game
+        if (!uniqueGames[gameId] || parseFloat(deal.salePrice) < parseFloat(uniqueGames[gameId].salePrice)) {
+          uniqueGames[gameId] = deal;
         }
-        return acc;
-      }, {})
-    );
+      });
+
+      page++;
+    }
+
+    const uniqueDeals = Object.values(uniqueGames);
 
     // Add human-readable storeName
     uniqueDeals.forEach(d => {
@@ -51,7 +60,7 @@ async function fetchDeals(currency) {
       data: uniqueDeals
     };
 
-    console.log(`Cache updated for ${currency} with ${uniqueDeals.length} deals`);
+    console.log(`Cache updated for ${currency} with ${uniqueDeals.length} unique deals`);
   } catch (err) {
     console.error(`Error fetching deals for ${currency}:`, err.message);
   }
