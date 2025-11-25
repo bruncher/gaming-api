@@ -9,5 +9,8 @@
   "dependencies": {
     "express": "^4.19.2",
     "axios": "^1.7.4"
-  }
+  },
+  "description": "Simple Node.js microservice returning game deals in USD and CAD",
+  "author": "bruncher",
+  "license": "MIT"
 }
