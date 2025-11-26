@@ -37,7 +37,9 @@ async function loadStores() {
 /**
  * Fetch deals from CheapShark (multiple pages) and store in cache
  */
-async function fetchDeals(currency, storeIDs = global.DEFAULT_STORE_IDS) {
+async function fetchDeals(currency, storeIDs) {
+  storeIDs = storeIDs || global.DEFAULT_STORE_IDS;
+  
   try {
     let page = 0;
     const uniqueGames = {};
