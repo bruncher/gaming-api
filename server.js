@@ -7,7 +7,7 @@ const app = express();
 let cache = {};
 const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 const CURRENCIES = ["USD", "CAD"];
-const DEFAULT_STORES = ["steam", "humble store", "fanatical"];
+const DEFAULT_STORES = ["steam", "humble store", "fanatical"].map(s => s.toLowerCase().trim());
 
 const STORE_PRIORITY = {
   "steam": 1,
@@ -23,11 +23,13 @@ let defaultStoreIDs = [];
 async function loadStores() {
   try {
     const res = await axios.get("https://www.cheapshark.com/api/1.0/stores");
-    storeMap = Object.fromEntries(res.data.map(s => [s.storeID, s.storeName]));
+    storeMap = Object.fromEntries(
+      res.data.map(s => [s.storeID, s.storeName.toLowerCase().trim()])
+    );
     console.log("Store map loaded:", Object.keys(storeMap).length, "stores");
 
     defaultStoreIDs = Object.entries(storeMap)
-      .filter(([id, name]) => DEFAULT_STORES.includes(name.toLowerCase()))
+      .filter(([id, name]) => DEFAULT_STORES.includes(name))
       .map(([id]) => id);
     
     console.log("Default store IDs:", defaultStoreIDs);
@@ -45,6 +47,11 @@ async function fetchDeals(currency, storeIDs) {
     console.error("fetchDeals called without a valid storeIDs array!");
     return;
   }
+
+  if (storeIDs.length === 0) {
+    console.error("fetchDeals aborted: no valid storeIDs found");
+    return;
+  }
   
   try {
     let page = 0;
@@ -52,66 +59,54 @@ async function fetchDeals(currency, storeIDs) {
     const pagesFetched = [];
 
     // Keep fetching until we have 100 unique games or 10 pages max
-    while (page < 10) {
+    while (Object.keys(uniqueGames).length < 100 && page < 50) {
       const response = await axios.get("https://www.cheapshark.com/api/1.0/deals", {
         params: {
           pageSize: 100,
           pageNumber: page,
           cc: currency,
-          storeID: storeIDs.join(",")  // only fetch the selected stores
+          storeID: storeIDs.join(",")
         }
       });
-
+    
       let newDealsThisPage = 0;
-
+    
       for (const deal of response.data) {
-        // Map storeName to lowercase for consistent priority comparison
-        deal.storeName = storeMap[deal.storeID]?.toLowerCase() || "unknown";
+        deal.storeName = storeMap[deal.storeID] || "unknown";
+    
+        // Skip deals without Steam App ID
+        if (!deal.steamAppID) continue;
     
         const gameId = deal.gameID;
-        // Price-first; use store priority only when prices tie
         const current = uniqueGames[gameId];
         const dealStore = deal.storeName.toLowerCase();
         const dealPrice = parseFloat(deal.salePrice);
-        
-        if (!STORE_PRIORITY[dealStore]) {
-          continue; // ignore stores we don't want
-        }
-        
+    
+        if (!STORE_PRIORITY[dealStore]) continue;
+    
         if (!current) {
           uniqueGames[gameId] = deal;
           newDealsThisPage++;
           continue;
         }
-        
+    
         const currentStore = current.storeName.toLowerCase();
         const currentPrice = parseFloat(current.salePrice);
-        
-        // Rule 1: lowest price wins
+    
         if (dealPrice < currentPrice) {
           uniqueGames[gameId] = deal;
           continue;
         }
-        
-        // Rule 2: if prices match, apply priority
+    
         if (dealPrice === currentPrice) {
           const dealPrio = STORE_PRIORITY[dealStore];
           const currentPrio = STORE_PRIORITY[currentStore];
-        
-          if (dealPrio < currentPrio) {
-            uniqueGames[gameId] = deal;
-          }
+          if (dealPrio < currentPrio) uniqueGames[gameId] = deal;
         }
-    
-        // Stop immediately if we hit 100 unique games
-        if (Object.keys(uniqueGames).length >= 100) break;
       }
-
+    
       pagesFetched.push({ page: page + 1, dealsFetched: newDealsThisPage });
-
-      // Stop fetching more pages if we hit 100 unique games
-      if (Object.keys(uniqueGames).length >= 100) break;
-
+    
       page++;
     }
 
@@ -155,13 +150,17 @@ app.get("/deals", async (req, res) => {
   try {
     const currency = (req.query.currency || "USD").toUpperCase();
 
-    if (!cache[currency]) {
+    const entry = cache[currency];
+    const isExpired = !entry || (Date.now() - entry.timestamp > CACHE_TTL);
+    const wasCached = !!entry && !isExpired;
+
+    if (isExpired) {
       await fetchDeals(currency, defaultStoreIDs);
     }
 
     res.json({
       success: true,
-      cached: true,
+      cached: wasCached,
       currency,
       count: cache[currency].data.length,
       deals: cache[currency].data
