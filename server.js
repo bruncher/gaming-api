@@ -7,7 +7,13 @@ const app = express();
 let cache = {};
 const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 const CURRENCIES = ["USD", "CAD"];
-const DEFAULT_STORES = ["steam", "humble store", "fanatical", "gog"];
+const DEFAULT_STORES = ["steam", "humble store", "fanatical"];
+
+const STORE_PRIORITY = {
+  "steam": 1,
+  "humble store": 2,
+  "fanatical": 3
+};
 let storeMap = {};
 let defaultStoreIDs = [];
 
@@ -59,22 +65,47 @@ async function fetchDeals(currency, storeIDs) {
       let newDealsThisPage = 0;
 
       for (const deal of response.data) {
-        // Add human-readable storeName
-        deal.storeName = storeMap[deal.storeID] || "Unknown";
-    
-        // Skip deal if store is not in default stores
-        //if (!DEFAULT_STORES.includes(deal.storeName.toLowerCase())) continue;
+        // Map storeName to lowercase for consistent priority comparison
+        deal.storeName = storeMap[deal.storeID]?.toLowerCase() || "unknown";
     
         const gameId = deal.gameID;
-        // Keep cheapest deal per game
-        if (!uniqueGames[gameId] || parseFloat(deal.salePrice) < parseFloat(uniqueGames[gameId].salePrice)) {
+        // Price-first; use store priority only when prices tie
+        const current = uniqueGames[gameId];
+        const dealStore = deal.storeName.toLowerCase();
+        const dealPrice = parseFloat(deal.salePrice);
+        
+        if (!STORE_PRIORITY[dealStore]) {
+          continue; // ignore stores we don't want
+        }
+        
+        if (!current) {
+          uniqueGames[gameId] = deal;
+          newDealsThisPage++;
+          continue;
+        }
+        
+        const currentStore = current.storeName.toLowerCase();
+        const currentPrice = parseFloat(current.salePrice);
+        
+        // Rule 1: lowest price wins
+        if (dealPrice < currentPrice) {
+          uniqueGames[gameId] = deal;
+          continue;
+        }
+        
+        // Rule 2: if prices match, apply priority
+        if (dealPrice === currentPrice) {
+          const dealPrio = STORE_PRIORITY[dealStore];
+          const currentPrio = STORE_PRIORITY[currentStore];
+        
+          if (dealPrio < currentPrio) {
             uniqueGames[gameId] = deal;
-            newDealsThisPage++;
+          }
         }
     
         // Stop immediately if we hit 100 unique games
         if (Object.keys(uniqueGames).length >= 100) break;
-    }
+      }
 
       pagesFetched.push({ page: page + 1, dealsFetched: newDealsThisPage });
 
@@ -86,11 +117,6 @@ async function fetchDeals(currency, storeIDs) {
 
     // Convert to array and trim to exactly 100 unique games (safety)
     const uniqueDeals = Object.values(uniqueGames).slice(0, 100);
-
-    // Add human-readable storeName
-    uniqueDeals.forEach(d => {
-      d.storeName = storeMap[d.storeID] || "Unknown";
-    });
 
     cache[currency] = {
       timestamp: Date.now(),
