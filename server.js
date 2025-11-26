@@ -9,6 +9,7 @@ const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 const CURRENCIES = ["USD", "CAD"];
 const DEFAULT_STORES = ["steam", "humble store", "fanatical", "gog"];
 let storeMap = {};
+let defaultStoreIDs = [];
 
 /**
  * Load storeID -> storeName map
@@ -19,15 +20,11 @@ async function loadStores() {
     storeMap = Object.fromEntries(res.data.map(s => [s.storeID, s.storeName]));
     console.log("Store map loaded:", Object.keys(storeMap).length, "stores");
 
-    // Add this here:
-    const DEFAULT_STORE_IDS = Object.entries(storeMap)
+    defaultStoreIDs = Object.entries(storeMap)
       .filter(([id, name]) => DEFAULT_STORES.includes(name.toLowerCase()))
       .map(([id]) => id);
-
-    console.log("Default store IDs:", DEFAULT_STORE_IDS);
-
-    // Make DEFAULT_STORE_IDS accessible to fetchDeals
-    global.DEFAULT_STORE_IDS = DEFAULT_STORE_IDS;
+    
+    console.log("Default store IDs:", defaultStoreIDs);
 
   } catch (err) {
     console.error("Error loading stores:", err.message);
@@ -38,7 +35,10 @@ async function loadStores() {
  * Fetch deals from CheapShark (multiple pages) and store in cache
  */
 async function fetchDeals(currency, storeIDs) {
-  storeIDs = storeIDs || global.DEFAULT_STORE_IDS;
+  if (!Array.isArray(storeIDs)) {
+    console.error("fetchDeals called without a valid storeIDs array!");
+    return;
+  }
   
   try {
     let page = 0;
@@ -110,14 +110,15 @@ async function fetchDeals(currency, storeIDs) {
  */
 async function preWarm() {
   await loadStores();
-  await Promise.all(CURRENCIES.map(fetchDeals));
+   
+  await Promise.all(CURRENCIES.map(currency => fetchDeals(currency, defaultStoreIDs)));
 }
 
 /**
  * Set up hourly update for USD and CAD
  */
 setInterval(() => {
-  CURRENCIES.forEach(fetchDeals);
+  CURRENCIES.forEach(currency => fetchDeals(currency, defaultStoreIDs));
 }, CACHE_TTL);
 
 /**
@@ -129,7 +130,7 @@ app.get("/deals", async (req, res) => {
     const currency = (req.query.currency || "USD").toUpperCase();
 
     if (!cache[currency]) {
-      await fetchDeals(currency);
+      await fetchDeals(currency, defaultStoreIDs);
     }
 
     res.json({
