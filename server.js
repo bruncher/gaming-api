@@ -18,6 +18,17 @@ async function loadStores() {
     const res = await axios.get("https://www.cheapshark.com/api/1.0/stores");
     storeMap = Object.fromEntries(res.data.map(s => [s.storeID, s.storeName]));
     console.log("Store map loaded:", Object.keys(storeMap).length, "stores");
+
+    // Add this here:
+    const DEFAULT_STORE_IDS = Object.entries(storeMap)
+      .filter(([id, name]) => DEFAULT_STORES.includes(name.toLowerCase()))
+      .map(([id]) => id);
+
+    console.log("Default store IDs:", DEFAULT_STORE_IDS);
+
+    // Make DEFAULT_STORE_IDS accessible to fetchDeals
+    global.DEFAULT_STORE_IDS = DEFAULT_STORE_IDS;
+
   } catch (err) {
     console.error("Error loading stores:", err.message);
   }
@@ -26,7 +37,7 @@ async function loadStores() {
 /**
  * Fetch deals from CheapShark (multiple pages) and store in cache
  */
-async function fetchDeals(currency) {
+async function fetchDeals(currency, storeIDs = global.DEFAULT_STORE_IDS) {
   try {
     let page = 0;
     const uniqueGames = {};
@@ -35,7 +46,12 @@ async function fetchDeals(currency) {
     // Keep fetching until we have 100 unique games or 10 pages max
     while (page < 10) {
       const response = await axios.get("https://www.cheapshark.com/api/1.0/deals", {
-        params: { pageSize: 100, pageNumber: page, cc: currency }
+        params: {
+          pageSize: 100,
+          pageNumber: page,
+          cc: currency,
+          storeID: storeIDs.join(",")  // only fetch the selected stores
+        }
       });
 
       let newDealsThisPage = 0;
@@ -45,7 +61,7 @@ async function fetchDeals(currency) {
         deal.storeName = storeMap[deal.storeID] || "Unknown";
     
         // Skip deal if store is not in default stores
-        if (!DEFAULT_STORES.includes(deal.storeName.toLowerCase())) continue;
+        //if (!DEFAULT_STORES.includes(deal.storeName.toLowerCase())) continue;
     
         const gameId = deal.gameID;
         // Keep cheapest deal per game
