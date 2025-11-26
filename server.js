@@ -7,6 +7,7 @@ const app = express();
 let cache = {};
 const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 const CURRENCIES = ["USD", "CAD"];
+const DEFAULT_STORES = ["steam", "humble store", "fanatical", "gog"];
 let storeMap = {};
 
 /**
@@ -40,16 +41,22 @@ async function fetchDeals(currency) {
       let newDealsThisPage = 0;
 
       for (const deal of response.data) {
+        // Add human-readable storeName
+        deal.storeName = storeMap[deal.storeID] || "Unknown";
+    
+        // Skip deal if store is not in default stores
+        if (!DEFAULT_STORES.includes(deal.storeName.toLowerCase())) continue;
+    
         const gameId = deal.gameID;
         // Keep cheapest deal per game
         if (!uniqueGames[gameId] || parseFloat(deal.salePrice) < parseFloat(uniqueGames[gameId].salePrice)) {
-          uniqueGames[gameId] = deal;
-          newDealsThisPage++;
+            uniqueGames[gameId] = deal;
+            newDealsThisPage++;
         }
-
+    
         // Stop immediately if we hit 100 unique games
         if (Object.keys(uniqueGames).length >= 100) break;
-      }
+    }
 
       pagesFetched.push({ page: page + 1, dealsFetched: newDealsThisPage });
 
