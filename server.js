@@ -59,7 +59,7 @@ async function fetchDeals(currency, storeIDs) {
     const pagesFetched = [];
 
     // Keep fetching until we have 100 unique games or 10 pages max
-    while (Object.keys(uniqueGames).length < 100 && page < 50) {
+    while (Object.keys(uniqueGames).length < 1000 && page < 100) {
       const response = await axios.get("https://www.cheapshark.com/api/1.0/deals", {
         params: {
           pageSize: 100,
@@ -111,7 +111,7 @@ async function fetchDeals(currency, storeIDs) {
     }
 
     // Convert to array and trim to exactly 100 unique games (safety)
-    const uniqueDeals = Object.values(uniqueGames).slice(0, 100);
+    const uniqueDeals = Object.values(uniqueGames);
 
     await enrichWithSteamData(uniqueDeals);
 
