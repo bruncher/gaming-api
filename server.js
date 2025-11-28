@@ -173,56 +173,72 @@ app.get("/deals", async (req, res) => {
   }
 });
 
+// Global cache for Steam metadata
+const steamMetaCache = {};
+
 async function enrichWithSteamData(deals) {
   const steamDeals = deals.filter(d => d.storeID === "1" && d.steamAppID);
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+  let enrichedCount = 0;
+
   for (const deal of steamDeals) {
     const id = String(deal.steamAppID);
+
+    // Use cached metadata if available
+    if (steamMetaCache[id]) {
+      deal.steamMeta = steamMetaCache[id];
+      enrichedCount++;
+      if (enrichedCount % 5 === 0 || enrichedCount === steamDeals.length) {
+        console.log(`Enriched Steam metadata (cached): ${enrichedCount}/${steamDeals.length}`);
+      }
+      continue;
+    }
 
     try {
       const res = await axios.get(
         "https://store.steampowered.com/api/appdetails",
-        {
-          params: { appids: id, l: "en", cc: "us" },
-          timeout: 6000
-        }
+        { params: { appids: id, l: "en", cc: "us" }, timeout: 6000 }
       );
 
-      // Safety: Steam sometimes returns array
       if (!res.data || Array.isArray(res.data)) {
         deal.steamMeta = null;
-        await sleep(150);
-        continue;
+      } else {
+        const info = res.data[id];
+        if (!info || !info.success) {
+          deal.steamMeta = null;
+        } else {
+          const data = info.data;
+          const date = data.release_date?.date;
+          deal.steamMeta = {
+            name: data.name,
+            release_date: date || null,
+            year: date && /\d{4}/.test(date) ? date.match(/\d{4}/)[0] : null,
+            genres: data.genres?.map(g => g.description) || [],
+            publishers: data.publishers || [],
+            rating: data.metacritic?.score || null
+          };
+        }
       }
 
-      const info = res.data[id];
-      if (!info || !info.success) {
-        deal.steamMeta = null;
-        await sleep(150);
-        continue;
-      }
-
-      const data = info.data;
-      const date = data.release_date?.date;
-
-      deal.steamMeta = {
-        name: data.name,
-        release_date: date || null,
-        year: date && /\d{4}/.test(date) ? date.match(/\d{4}/)[0] : null,
-        genres: data.genres?.map(g => g.description) || [],
-        publishers: data.publishers || [],
-        rating: data.metacritic?.score || null
-      };
+      // Cache the metadata
+      steamMetaCache[id] = deal.steamMeta;
 
     } catch (err) {
       console.error(`Steam meta error for ${id}:`, err.message);
       deal.steamMeta = null;
+      steamMetaCache[id] = null; // cache failed attempt too
     }
 
-    // safer throttle
-    await sleep(150);
+    enrichedCount++;
+    if (enrichedCount % 5 === 0 || enrichedCount === steamDeals.length) {
+      console.log(`Enriched Steam metadata: ${enrichedCount}/${steamDeals.length}`);
+    }
+
+    await sleep(150); // throttle
   }
+
+  console.log(`Finished enriching Steam data: ${enrichedCount}/${steamDeals.length} deals`);
 }
 
 const PORT = process.env.PORT || 3000;
