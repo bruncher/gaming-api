@@ -113,8 +113,6 @@ async function fetchDeals(currency, storeIDs) {
     // Convert to array and trim to exactly 100 unique games (safety)
     const uniqueDeals = Object.values(uniqueGames);
 
-    await enrichWithSteamData(uniqueDeals);
-
     cache[currency] = {
       timestamp: Date.now(),
       data: uniqueDeals
@@ -157,20 +155,24 @@ app.get("/deals", async (req, res) => {
     const wasCached = !!entry && !isExpired;
 
     if (isExpired) {
-      await fetchDeals(currency, defaultStoreIDs);
+      fetchDeals(currency, defaultStoreIDs).catch(console.error);
     }
 
     res.json({
       success: true,
       cached: wasCached,
       currency,
-      count: cache[currency].data.length,
-      deals: cache[currency].data
+      count: entry ? entry.data.length : 0,
+      deals: entry ? entry.data : []
     });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+app.get("/", (req, res) => {
+  res.json({ status: "ok", message: "gaming-api live" });
 });
 
 // Global cache for Steam metadata
@@ -227,7 +229,10 @@ async function enrichWithSteamData(deals) {
     } catch (err) {
       console.error(`Steam meta error for ${id}:`, err.message);
       deal.steamMeta = null;
-      steamMetaCache[id] = null; // cache failed attempt too
+      // For 403, skip caching null so we retry later
+      if (err.response?.status !== 403) {
+        steamMetaCache[id] = null;
+      }
     }
 
     enrichedCount++;
@@ -242,7 +247,15 @@ async function enrichWithSteamData(deals) {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`gaming-api running on port ${PORT}`);
-  await preWarm();
+  // Run prewarm in background
+  preWarm().catch(err => console.error("Prewarm failed:", err));
 });
+
+setInterval(() => {
+  const allDeals = [...(cache["USD"]?.data || []), ...(cache["CAD"]?.data || [])];
+  if (allDeals.length > 0) {
+    enrichWithSteamData(allDeals).catch(console.error);
+  }
+}, 30 * 60 * 1000); // every 30 minutes
