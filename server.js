@@ -113,6 +113,8 @@ async function fetchDeals(currency, storeIDs) {
     // Convert to array and trim to exactly 100 unique games (safety)
     const uniqueDeals = Object.values(uniqueGames).slice(0, 100);
 
+    await enrichWithSteamData(uniqueDeals);
+
     cache[currency] = {
       timestamp: Date.now(),
       data: uniqueDeals
@@ -170,6 +172,45 @@ app.get("/deals", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+async function enrichWithSteamData(deals) {
+  const ids = deals.map(d => d.steamAppID).filter(Boolean);
+
+  try {
+    const res = await axios.get(
+      "https://store.steampowered.com/api/appdetails",
+      {
+        params: { appids: ids, l: "en", cc: "us" },
+        paramsSerializer: {
+          serialize: params =>
+            params.appids.map(id => `appids=${id}`).join("&") +
+            `&l=en&cc=us`
+        },
+        timeout: 8000
+      }
+    );
+
+    for (const deal of deals) {
+      const info = res.data[deal.steamAppID];
+      if (!info || !info.success) continue;
+
+      const data = info.data;
+      const date = data.release_date?.date;
+
+      deal.steamMeta = {
+        name: data.name,
+        release_date: date || null,
+        year: date && /\d{4}/.test(date) ? date.match(/\d{4}/)[0] : null,
+        genres: data.genres?.map(g => g.description) || [],
+        publishers: data.publishers || [],
+        rating: data.metacritic?.score || null
+      };
+    }
+
+  } catch (err) {
+    console.error("Steam metadata error:", err.message);
+  }
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
