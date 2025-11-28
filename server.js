@@ -174,25 +174,34 @@ app.get("/deals", async (req, res) => {
 });
 
 async function enrichWithSteamData(deals) {
-  const ids = deals.map(d => d.steamAppID).filter(Boolean);
+  const steamDeals = deals.filter(d => d.storeID === "1" && d.steamAppID);
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-  try {
-    const res = await axios.get(
-      "https://store.steampowered.com/api/appdetails",
-      {
-        params: { appids: ids, l: "en", cc: "us" },
-        paramsSerializer: {
-          serialize: params =>
-            params.appids.map(id => `appids=${id}`).join("&") +
-            `&l=en&cc=us`
-        },
-        timeout: 8000
+  for (const deal of steamDeals) {
+    const id = String(deal.steamAppID);
+
+    try {
+      const res = await axios.get(
+        "https://store.steampowered.com/api/appdetails",
+        {
+          params: { appids: id, l: "en", cc: "us" },
+          timeout: 6000
+        }
+      );
+
+      // Safety: Steam sometimes returns array
+      if (!res.data || Array.isArray(res.data)) {
+        deal.steamMeta = null;
+        await sleep(150);
+        continue;
       }
-    );
 
-    for (const deal of deals) {
-      const info = res.data[deal.steamAppID];
-      if (!info || !info.success) continue;
+      const info = res.data[id];
+      if (!info || !info.success) {
+        deal.steamMeta = null;
+        await sleep(150);
+        continue;
+      }
 
       const data = info.data;
       const date = data.release_date?.date;
@@ -205,10 +214,14 @@ async function enrichWithSteamData(deals) {
         publishers: data.publishers || [],
         rating: data.metacritic?.score || null
       };
+
+    } catch (err) {
+      console.error(`Steam meta error for ${id}:`, err.message);
+      deal.steamMeta = null;
     }
 
-  } catch (err) {
-    console.error("Steam metadata error:", err.message);
+    // safer throttle
+    await sleep(150);
   }
 }
 
