@@ -177,7 +177,7 @@ app.get("/deals", async (req, res) => {
 const steamMetaCache = {};
 
 async function enrichWithSteamData(deals) {
-  const steamDeals = deals.filter(d => d.storeID === "1" && d.steamAppID);
+  const steamDeals = deals.filter(d => d.steamAppID);
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   let enrichedCount = 0;
