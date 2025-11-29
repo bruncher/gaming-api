@@ -215,17 +215,19 @@ async function enrichWithSteamData(deals) {
       continue;
     }
 
-    // Retry logic for 429
+    // Retry logic for 429 with soft max attempts
     let attempts = 0;
-    let success = false;
-    while (!success && attempts < 5) {
+    const MAX_ATTEMPTS = 30;
+    let done = false;
+    
+    while (!done && attempts < MAX_ATTEMPTS) {
       attempts++;
       try {
         const res = await axios.get(
           "https://store.steampowered.com/api/appdetails",
           { params: { appids: id, l: "en", cc: "us" }, timeout: 6000 }
         );
-
+    
         const info = res.data[id];
         if (!info || !info.success) {
           deal.steamMeta = null;
@@ -241,22 +243,30 @@ async function enrichWithSteamData(deals) {
             rating: data.metacritic?.score || null
           };
         }
-
+    
         steamMetaCache[id] = deal.steamMeta;
-        success = true;
+        done = true;
+    
+        if (attempts > 1) {
+          console.log(`✅ Steam app ${id} succeeded after ${attempts} attempts (backoff completed)`);
+        }
+    
       } catch (err) {
         if (err.response?.status === 429) {
-          // Rate limit, exponential backoff
-          const delay = 1000 * Math.pow(2, attempts); // 2s, 4s, 8s, 16s...
+          const delay = Math.min(30000, 1000 * Math.pow(2, attempts));
           console.warn(`429 for ${id}, retrying in ${delay}ms (attempt ${attempts})`);
           await sleep(delay);
         } else {
           console.error(`Steam meta error for ${id}:`, err.message);
           deal.steamMeta = null;
           if (err.response?.status !== 403) steamMetaCache[id] = null;
-          success = true; // stop retrying for other errors
+          done = true;
         }
       }
+    }
+    
+    if (!done) {
+      console.warn(`Max attempts reached for ${id}, skipping...`);
     }
 
     enrichedCount++;
