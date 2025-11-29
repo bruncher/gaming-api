@@ -186,17 +186,27 @@ app.get("/debug/cache", (req, res) => {
   });
 });
 
+// ==========================
+// Revised Steam enrichment
+// ==========================
 async function enrichWithSteamData(deals) {
-  const steamDeals = deals.filter(d => d.steamAppID);
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  // Deduplicate by Steam ID
+  const seen = new Set();
+  const steamDeals = deals.filter(d => {
+    if (!d.steamAppID) return false;
+    if (seen.has(d.steamAppID)) return false;
+    seen.add(d.steamAppID);
+    return true;
+  });
 
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
   let enrichedCount = 0;
 
   for (const deal of steamDeals) {
     const id = String(deal.steamAppID);
 
-    // Use cached metadata if available
-    if (steamMetaCache[id]) {
+    // Skip if cached
+    if (steamMetaCache[id] !== undefined) {
       deal.steamMeta = steamMetaCache[id];
       enrichedCount++;
       if (enrichedCount % 5 === 0 || enrichedCount === steamDeals.length) {
@@ -205,15 +215,17 @@ async function enrichWithSteamData(deals) {
       continue;
     }
 
-    try {
-      const res = await axios.get(
-        "https://store.steampowered.com/api/appdetails",
-        { params: { appids: id, l: "en", cc: "us" }, timeout: 6000 }
-      );
+    // Retry logic for 429
+    let attempts = 0;
+    let success = false;
+    while (!success && attempts < 5) {
+      attempts++;
+      try {
+        const res = await axios.get(
+          "https://store.steampowered.com/api/appdetails",
+          { params: { appids: id, l: "en", cc: "us" }, timeout: 6000 }
+        );
 
-      if (!res.data || Array.isArray(res.data)) {
-        deal.steamMeta = null;
-      } else {
         const info = res.data[id];
         if (!info || !info.success) {
           deal.steamMeta = null;
@@ -229,17 +241,21 @@ async function enrichWithSteamData(deals) {
             rating: data.metacritic?.score || null
           };
         }
-      }
 
-      // Cache the metadata
-      steamMetaCache[id] = deal.steamMeta;
-
-    } catch (err) {
-      console.error(`Steam meta error for ${id}:`, err.message);
-      deal.steamMeta = null;
-      // For 403, skip caching null so we retry later
-      if (err.response?.status !== 403) {
-        steamMetaCache[id] = null;
+        steamMetaCache[id] = deal.steamMeta;
+        success = true;
+      } catch (err) {
+        if (err.response?.status === 429) {
+          // Rate limit, exponential backoff
+          const delay = 1000 * Math.pow(2, attempts); // 2s, 4s, 8s, 16s...
+          console.warn(`429 for ${id}, retrying in ${delay}ms (attempt ${attempts})`);
+          await sleep(delay);
+        } else {
+          console.error(`Steam meta error for ${id}:`, err.message);
+          deal.steamMeta = null;
+          if (err.response?.status !== 403) steamMetaCache[id] = null;
+          success = true; // stop retrying for other errors
+        }
       }
     }
 
@@ -248,11 +264,12 @@ async function enrichWithSteamData(deals) {
       console.log(`Enriched Steam metadata: ${enrichedCount}/${steamDeals.length}`);
     }
 
-    await sleep(150); // throttle
+    await sleep(150); // throttle normal requests
   }
 
   console.log(`Finished enriching Steam data: ${enrichedCount}/${steamDeals.length} deals`);
 }
+
 
 const PORT = process.env.PORT || 3000;
 (async () => {
@@ -286,25 +303,16 @@ const PORT = process.env.PORT || 3000;
 
 })();
 
+// ==========================
+// Run enrichment once per day
+// ==========================
 setInterval(() => {
-  // Pull real deal objects from cache
   const combined = [
     ...(cache["USD"]?.data || []),
     ...(cache["CAD"]?.data || [])
   ];
 
-  // Dedupe by steamAppID but by REFERENCE
-  const seen = new Set();
-  const uniqueDeals = [];
-
-  for (const d of combined) {
-    if (!d.steamAppID) continue;
-    if (seen.has(d.steamAppID)) continue;
-    seen.add(d.steamAppID);
-    uniqueDeals.push(d); // push the ORIGINAL object
+  if (combined.length > 0) {
+    enrichWithSteamData(combined).catch(console.error);
   }
-
-  if (uniqueDeals.length > 0) {
-    enrichWithSteamData(uniqueDeals).catch(console.error);
-  }
-}, 30 * 60 * 1000);
+}, 24 * 60 * 60 * 1000); // daily
