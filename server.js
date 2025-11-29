@@ -258,12 +258,31 @@ const PORT = process.env.PORT || 3000;
 (async () => {
   console.log("Starting server… loading stores and warming cache…");
 
-  await preWarm();               // ⬅️ FORCE COMPLETE BEFORE LISTEN
+  await preWarm(); // fetch CheapShark deals
   console.log("Warmup complete.");
-
+  
+  // Start Steam enrichment asynchronously (does NOT block server start)
+  const allDeals = [
+    ...(cache["USD"]?.data || []),
+    ...(cache["CAD"]?.data || [])
+  ];
+  if (allDeals.length > 0) {
+    enrichWithSteamData(allDeals).catch(err => console.error("Initial Steam enrichment failed:", err));
+  }
+  
   app.listen(PORT, () => {
     console.log(`gaming-api running on port ${PORT}`);
   });
+
+  // Ping /deals every 5 minutes to keep the server from sleeping
+  setInterval(async () => {
+    try {
+      await axios.get(`http://localhost:${PORT}/deals`);
+      console.log("Keep-alive pinged /deals");
+    } catch (err) {
+      console.error("Keep-alive failed:", err.message);
+    }
+  }, 5 * 60 * 1000);
 
 })();
 
