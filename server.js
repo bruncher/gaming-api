@@ -142,6 +142,9 @@ setInterval(() => {
   CURRENCIES.forEach(currency => fetchDeals(currency, defaultStoreIDs));
 }, CACHE_TTL);
 
+// Global cache for Steam metadata
+const steamMetaCache = {};
+
 /**
  * GET /deals
  * Optional query: ?currency=USD or CAD
@@ -175,8 +178,13 @@ app.get("/", (req, res) => {
   res.json({ status: "ok", message: "gaming-api live" });
 });
 
-// Global cache for Steam metadata
-const steamMetaCache = {};
+app.get("/debug/cache", (req, res) => {
+  res.json({
+    usd: cache.USD?.data.length || 0,
+    cad: cache.CAD?.data.length || 0,
+    steamMetaCount: Object.keys(steamMetaCache).length
+  });
+});
 
 async function enrichWithSteamData(deals) {
   const steamDeals = deals.filter(d => d.steamAppID);
@@ -247,15 +255,37 @@ async function enrichWithSteamData(deals) {
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`gaming-api running on port ${PORT}`);
-  // Run prewarm in background
-  preWarm().catch(err => console.error("Prewarm failed:", err));
-});
+(async () => {
+  console.log("Starting server… loading stores and warming cache…");
+
+  await preWarm();               // ⬅️ FORCE COMPLETE BEFORE LISTEN
+  console.log("Warmup complete.");
+
+  app.listen(PORT, () => {
+    console.log(`gaming-api running on port ${PORT}`);
+  });
+
+})();
 
 setInterval(() => {
-  const allDeals = [...(cache["USD"]?.data || []), ...(cache["CAD"]?.data || [])];
-  if (allDeals.length > 0) {
-    enrichWithSteamData(allDeals).catch(console.error);
+  // Pull real deal objects from cache
+  const combined = [
+    ...(cache["USD"]?.data || []),
+    ...(cache["CAD"]?.data || [])
+  ];
+
+  // Dedupe by steamAppID but by REFERENCE
+  const seen = new Set();
+  const uniqueDeals = [];
+
+  for (const d of combined) {
+    if (!d.steamAppID) continue;
+    if (seen.has(d.steamAppID)) continue;
+    seen.add(d.steamAppID);
+    uniqueDeals.push(d); // push the ORIGINAL object
   }
-}, 30 * 60 * 1000); // every 30 minutes
+
+  if (uniqueDeals.length > 0) {
+    enrichWithSteamData(uniqueDeals).catch(console.error);
+  }
+}, 30 * 60 * 1000);
