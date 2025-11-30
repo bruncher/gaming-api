@@ -337,15 +337,12 @@ const PORT = process.env.PORT || 3000;
     console.log(`gaming-api running on port ${PORT}`);
   });
 
-  // Keep-alive ping (does NOT warm cache)
-  setInterval(async () => {
-    try {
-      await axios.get(`http://localhost:${PORT}/ping`);
-      console.log("Internal keep-alive ping");
-    } catch (err) {
-      console.error("Keep-alive failed:", err.message);
-    }
-  }, 5 * 60 * 1000); // every 5 minutes
+  // Periodic status update
+  setInterval(() => {
+    const usdCount = cache.USD?.data.length || 0;
+    const cadCount = cache.CAD?.data.length || 0;
+    console.log(`Status update: USD deals ${usdCount}, CAD deals ${cadCount}, Steam cache ${Object.keys(steamMetaCache).length}`);
+  }, 60 * 60 * 1000); // every hour
 
 })();
 
