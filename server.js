@@ -186,6 +186,10 @@ app.get("/debug/cache", (req, res) => {
   });
 });
 
+app.get("/ping", (req, res) => {
+  res.json({ status: "alive", time: Date.now() });
+});
+
 // ==========================
 // Revised Steam enrichment
 // ==========================
@@ -301,15 +305,15 @@ const PORT = process.env.PORT || 3000;
     console.log(`gaming-api running on port ${PORT}`);
   });
 
-  // Ping /deals every 5 minutes to keep the server from sleeping
+  // Keep-alive ping (does NOT warm cache)
   setInterval(async () => {
     try {
-      await axios.get(`http://localhost:${PORT}/deals`);
-      console.log("Keep-alive pinged /deals");
+      await axios.get(`http://localhost:${PORT}/ping`);
+      console.log("Internal keep-alive ping");
     } catch (err) {
       console.error("Keep-alive failed:", err.message);
     }
-  }, 5 * 60 * 1000);
+  }, 5 * 60 * 1000); // every 5 minutes
 
 })();
 
