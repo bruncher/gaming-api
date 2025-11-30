@@ -113,10 +113,23 @@ async function fetchDeals(currency, storeIDs) {
     // Convert to array and trim to exactly 100 unique games (safety)
     const uniqueDeals = Object.values(uniqueGames);
 
-    cache[currency] = {
+    // Reattach previously cached Steam metadata
+    for (const deal of uniqueDeals) {
+      const id = String(deal.steamAppID);
+      if (steamMetaCache[id] !== undefined) {
+        deal.steamMeta = steamMetaCache[id];
+      } else {
+        deal.steamMeta = null; // placeholder until enrichment fills it
+      }
+    }
+
+    const newBlock = {
       timestamp: Date.now(),
       data: uniqueDeals
     };
+    
+    // Atomic swap — ensures no partial metadata window
+    cache[currency] = newBlock;
 
     console.log(`Cache updated for ${currency} with ${uniqueDeals.length} unique deals`);
     console.log(`Pages fetched:`, pagesFetched);
@@ -198,10 +211,18 @@ async function enrichWithSteamData(deals) {
   const seen = new Set();
   const steamDeals = deals.filter(d => {
     if (!d.steamAppID) return false;
-    if (seen.has(d.steamAppID)) return false;
-    seen.add(d.steamAppID);
-    return true;
+    const id = String(d.steamAppID);
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return steamMetaCache[id] === undefined || steamMetaCache[id] === null;
   });
+
+  if (steamDeals.length === 0) {
+    console.log("Steam enrichment: nothing to enrich, all metadata already cached.");
+    return;
+  }
+  
+  console.log(`Steam enrichment: ${steamDeals.length} new or missing metadata items.`);
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   let enrichedCount = 0;
@@ -249,6 +270,17 @@ async function enrichWithSteamData(deals) {
         }
     
         steamMetaCache[id] = deal.steamMeta;
+
+        // Also update current deals inside both USD and CAD caches
+        for (const currency of CURRENCIES) {
+          const cur = cache[currency];
+          if (!cur || !cur.data) continue;
+        
+          const match = cur.data.find(d => String(d.steamAppID) === id);
+          if (match) {
+            match.steamMeta = deal.steamMeta;
+          }
+        }
         done = true;
     
         if (attempts > 1) {
