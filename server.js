@@ -230,8 +230,8 @@ async function enrichWithSteamData(deals) {
   for (const deal of steamDeals) {
     const id = String(deal.steamAppID);
 
-    // Skip if cached
-    if (steamMetaCache[id] !== undefined) {
+    // Skip if cached with real data
+    if (steamMetaCache[id] !== undefined && steamMetaCache[id] !== null) {
       deal.steamMeta = steamMetaCache[id];
       enrichedCount++;
       if (enrichedCount % 5 === 0 || enrichedCount === steamDeals.length) {
@@ -288,15 +288,19 @@ async function enrichWithSteamData(deals) {
         }
     
       } catch (err) {
-        if (err.response?.status === 429) {
+        const status = err.response?.status;
+      
+        if (status === 429 || status === 403) {
+          // exponential backoff for both 429 and 403
           const delay = Math.min(30000, 1000 * Math.pow(2, attempts));
-          console.warn(`429 for ${id}, retrying in ${delay}ms (attempt ${attempts})`);
+          console.warn(`${status} for ${id}, retrying in ${delay}ms (attempt ${attempts})`);
           await sleep(delay);
+          // do not set done = true; retry will continue
         } else {
           console.error(`Steam meta error for ${id}:`, err.message);
           deal.steamMeta = null;
-          if (err.response?.status !== 403) steamMetaCache[id] = null;
-          done = true;
+          steamMetaCache[id] = null;
+          done = true; // stop retries for other errors
         }
       }
     }
