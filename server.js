@@ -1,7 +1,9 @@
 import express from "express";
 import axios from "axios";
+import cors from "cors";
 
 const app = express();
+app.use(cors());
 
 // In-memory cache per currency
 let cache = {};
