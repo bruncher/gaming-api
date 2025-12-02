@@ -3,7 +3,18 @@ import axios from "axios";
 import cors from "cors";
 
 const app = express();
-app.use(cors());
+const allowedOrigins = ["https://bruncher.github.io", "http://localhost:3000"];
+
+app.use(cors({
+  origin: function(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn("Blocked CORS request from:", origin);
+      callback(new Error("Not allowed by CORS"));
+    }
+  }
+}));
 
 // In-memory cache per currency
 let cache = {};
